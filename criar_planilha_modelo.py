@@ -108,50 +108,40 @@ def create_template(output_path: str = "planilha_modelo.xlsx") -> None:
 
 
 def _add_fields_reference_sheet(wb: openpyxl.Workbook) -> None:
-    """Cria uma aba 'Campos Extraídos' com a referência dos campos por plataforma."""
+    """Cria aba 'Campos Extraídos' com uma coluna por plataforma."""
     ws = wb.create_sheet(title="Campos Extraídos")
 
-    header_style = {
-        "linkedin":  (_fill(config.PLATFORM_COLORS["linkedin"]),  Font(bold=True, color="FFFFFF")),
-        "instagram": (_fill(config.PLATFORM_COLORS["instagram"]), Font(bold=True, color="FFFFFF")),
-        "tiktok":    (_fill(config.PLATFORM_COLORS["tiktok"]),    Font(bold=True, color="FFFFFF")),
-    }
-
-    platform_data = [
-        ("LinkedIn", config.LINKEDIN_FIELDS),
-        ("Instagram", config.INSTAGRAM_FIELDS),
-        ("TikTok", config.TIKTOK_FIELDS),
+    # Definição: (nome, intervalo de colunas na planilha, campos, cor)
+    platforms = [
+        ("LinkedIn",  "AF – AN", config.LINKEDIN_FIELDS,  config.PLATFORM_COLORS["linkedin"]),
+        ("Instagram", "AO – AW", config.INSTAGRAM_FIELDS, config.PLATFORM_COLORS["instagram"]),
+        ("TikTok",    "AX – BF", config.TIKTOK_FIELDS,    config.PLATFORM_COLORS["tiktok"]),
     ]
 
-    row = 1
-    for platform_name, fields in platform_data:
-        key = platform_name.lower()
-        fill, font = header_style[key]
+    alt_fill = _fill("F2F2F2")
 
-        # Título da plataforma
-        title_cell = ws.cell(row=row, column=1, value=f"  {platform_name}")
-        title_cell.font = font
-        title_cell.fill = fill
-        title_cell.alignment = Alignment(vertical="center")
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        ws.row_dimensions[row].height = 24
-        row += 1
+    # Linha 1: cabeçalhos coloridos com nome + intervalo de colunas
+    for ci, (name, col_range, _, color) in enumerate(platforms, 1):
+        cell = ws.cell(row=1, column=ci, value=f"{name}  ({col_range})")
+        cell.font      = Font(bold=True, color="FFFFFF", size=11)
+        cell.fill      = _fill(color)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 30
 
-        # Sub-cabeçalho
-        ws.cell(row=row, column=1, value="Campo").font = Font(bold=True)
-        ws.cell(row=row, column=2, value="Descrição").font = Font(bold=True)
-        row += 1
+    # Linhas 2+: campos de cada plataforma em sua respectiva coluna
+    max_fields = max(len(p[2]) for p in platforms)
+    for ri in range(max_fields):
+        for ci, (_, _, fields, _) in enumerate(platforms, 1):
+            if ri < len(fields):
+                cell = ws.cell(row=ri + 2, column=ci, value=fields[ri])
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+                if (ri + 2) % 2 == 0:
+                    cell.fill = alt_fill
 
-        # Campos
-        for field in fields:
-            ws.cell(row=row, column=1, value=field)
-            ws.cell(row=row, column=2, value="Extraído automaticamente")
-            row += 1
-
-        row += 1  # espaço entre plataformas
-
-    ws.column_dimensions["A"].width = 55
-    ws.column_dimensions["B"].width = 30
+    # Largura das colunas
+    ws.column_dimensions["A"].width = 48
+    ws.column_dimensions["B"].width = 32
+    ws.column_dimensions["C"].width = 30
 
 
 # ---------------------------------------------------------------------------

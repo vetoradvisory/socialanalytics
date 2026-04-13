@@ -479,7 +479,7 @@ class _BaseExtractor:
                 document.querySelectorAll('*').forEach(el => {
                     if (el.children.length > 0) return;
                     const t = (el.textContent || '').trim();
-                    if (/^[\d][\d\\s.,]*[KkMmBb]?$/.test(t) && t.length < 20) {
+                    if (/^[\\d][\\d\\s.,]*[KkMmBb]?$/.test(t) && t.length < 20) {
                         const p = el.parentElement;
                         if (p) res.push({value: t, ctx: p.textContent.trim().slice(0,250)});
                     }
