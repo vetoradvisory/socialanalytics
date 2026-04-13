@@ -209,6 +209,14 @@ TIKTOK_LABEL_MAP: dict[str, list[str]] = {
 }
 
 # ---------------------------------------------------------------------------
+# COLUNAS DE SAÍDA NA PLANILHA (escrita in-place)
+# LinkedIn → AF:AN  |  Instagram → AO:AW  |  TikTok → AX:BF
+# ---------------------------------------------------------------------------
+LINKEDIN_OUTPUT_COL  = "AF"   # AF(32) a AN(40) — 9 campos LinkedIn
+INSTAGRAM_OUTPUT_COL = "AO"   # AO(41) a AW(49) — 9 campos Instagram
+TIKTOK_OUTPUT_COL    = "AX"   # AX(50) a BF(58) — 9 campos TikTok
+
+# ---------------------------------------------------------------------------
 # TERMOS DE PATROCÍNIO
 # ---------------------------------------------------------------------------
 SPONSORED_TERMS = [
@@ -233,10 +241,18 @@ PLATFORM_COLORS = {
 }
 
 # ---------------------------------------------------------------------------
-# CONFIGURAÇÕES DE ESPERA / SCROLL
+# CONFIGURAÇÕES DE ESPERA / SCROLL  (todos em segundos)
 # ---------------------------------------------------------------------------
-PAGE_LOAD_TIMEOUT = 20        # segundos para esperar o carregamento inicial
-SCROLL_PAUSE = 1.5            # segundos entre cada passo de scroll
-SCROLL_STEP_PX = 600          # pixels por passo de scroll
-POST_SCROLL_WAIT = 2.0        # segundos após scroll completo antes de extrair
-BETWEEN_URLS_PAUSE = 3        # segundos entre URLs para evitar rate-limit
+PAGE_LOAD_TIMEOUT    = 20     # timeout do carregamento inicial
+POST_SCROLL_WAIT     = 2.0    # pausa antes de extrair texto após scroll
+BETWEEN_URLS_MIN     = 4      # pausa mínima entre URLs (anti-rate-limit)
+BETWEEN_URLS_MAX     = 9      # pausa máxima entre URLs
+
+# --- Parâmetros de scroll humano ---
+SCROLL_STEP_MIN      = 220    # pixels mínimos por "gesto" de scroll
+SCROLL_STEP_MAX      = 520    # pixels máximos por "gesto" de scroll
+SCROLL_FAST_PAUSE    = (0.35, 1.1)   # (min, max) pausa scroll rápido
+SCROLL_READ_PAUSE    = (2.0,  5.0)   # (min, max) pausa de "leitura"
+SCROLL_READ_PROB     = 0.18          # probabilidade de pausar para "ler"
+SCROLL_BACK_PROB     = 0.10          # probabilidade de rolar levemente para cima
+SCROLL_BACK_PX       = (70, 220)     # quantidade de pixels no recuo
