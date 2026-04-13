@@ -43,6 +43,16 @@ from selenium.webdriver.support.ui import WebDriverWait
 import config
 
 # ---------------------------------------------------------------------------
+# gspread (opcional — necessário apenas para Google Sheets)
+# ---------------------------------------------------------------------------
+try:
+    import gspread
+    from openpyxl.utils import get_column_letter
+    _GSPREAD_AVAILABLE = True
+except ImportError:
+    _GSPREAD_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
 # undetected-chromedriver (opcional — fallback para selenium puro se ausente)
 # ---------------------------------------------------------------------------
 try:
@@ -806,6 +816,116 @@ class ExcelManager:
 
 
 # ===========================================================================
+# GERENCIADOR DE GOOGLE SHEETS  (leitura + escrita in-place)
+# ===========================================================================
+
+def _is_google_sheet(s: str) -> bool:
+    return "docs.google.com/spreadsheets" in s
+
+
+class GoogleSheetsManager:
+    """
+    Lê as URLs da coluna AE da aba 'posts' e escreve os resultados
+    de volta nas colunas designadas por plataforma.
+
+    Autenticação via OAuth2 — requer credentials.json obtido no
+    Google Cloud Console (execute configurar_google.py uma vez).
+    """
+
+    # Coluna AE = 31 (1-based) — URL de analytics
+    URL_COL = column_index_from_string("AE")
+
+    def __init__(self, sheet_url: str, tab_name: str = "posts") -> None:
+        if not _GSPREAD_AVAILABLE:
+            raise ImportError(
+                "gspread não instalado.\n"
+                "Execute: pip install gspread google-auth-oauthlib"
+            )
+        self.tab_name = tab_name
+        self._sheet_id = self._extract_id(sheet_url)
+        self._ws = self._open_worksheet()
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_id(url: str) -> str:
+        m = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", url)
+        if not m:
+            raise ValueError(f"URL de Google Sheets inválida: {url}")
+        return m.group(1)
+
+    def _open_worksheet(self):
+        creds   = Path("credentials.json")
+        token   = Path("token.json")
+        if not creds.exists():
+            raise FileNotFoundError(
+                "\nArquivo 'credentials.json' não encontrado.\n"
+                "Execute primeiro:  python configurar_google.py\n"
+            )
+        gc = gspread.oauth(
+            credentials_filename=str(creds),
+            authorized_user_filename=str(token),
+        )
+        spreadsheet = gc.open_by_key(self._sheet_id)
+        try:
+            return spreadsheet.worksheet(self.tab_name)
+        except gspread.WorksheetNotFound:
+            available = [ws.title for ws in spreadsheet.worksheets()]
+            raise ValueError(
+                f"Aba '{self.tab_name}' não encontrada.\n"
+                f"Abas disponíveis: {', '.join(available)}\n"
+                f"Use --aba <nome> para especificar."
+            )
+
+    # ------------------------------------------------------------------
+    def url_rows(self) -> dict[int, str]:
+        """Retorna {linha: url} lendo coluna AE da aba."""
+        log.info("Lendo URLs do Google Sheets (aba '%s', coluna AE)...", self.tab_name)
+        all_vals = self._ws.get_all_values()
+        result   = {}
+        col_idx  = self.URL_COL - 1   # 0-based para lista Python
+        for row_idx, row in enumerate(all_vals, 1):
+            if row_idx == 1:
+                continue  # pula cabeçalho
+            if col_idx < len(row):
+                url = row[col_idx].strip()
+                if url.startswith("http"):
+                    result[row_idx] = url
+        log.info("%d URL(s) encontrada(s).", len(result))
+        return result
+
+    # ------------------------------------------------------------------
+    def ensure_headers(self) -> None:
+        """Escreve os cabeçalhos dos campos nas colunas designadas (linha 1)."""
+        updates = []
+        for platform, start_col in _OUTPUT_COL.items():
+            for i, field in enumerate(_FIELDS_MAP[platform]):
+                col_letter = get_column_letter(start_col + i)
+                updates.append({"range": f"{col_letter}1", "values": [[field]]})
+        if updates:
+            self._ws.batch_update(updates, value_input_option="RAW")
+            log.info("Cabeçalhos gravados no Google Sheets.")
+
+    # ------------------------------------------------------------------
+    def write_row(self, row_num: int, platform: str, data: dict) -> None:
+        """Escreve os campos de uma plataforma na linha indicada."""
+        p = platform.lower()
+        if p not in _OUTPUT_COL:
+            log.warning("Plataforma '%s' sem mapeamento de colunas.", p)
+            return
+        start_col = _OUTPUT_COL[p]
+        fields    = _FIELDS_MAP[p]
+        values    = [data.get(f, "") for f in fields]
+        end_col   = start_col + len(fields) - 1
+        range_str = (
+            f"{get_column_letter(start_col)}{row_num}:"
+            f"{get_column_letter(end_col)}{row_num}"
+        )
+        self._ws.update(range_str, [values], value_input_option="RAW")
+        log.info("Linha %d atualizada no Google Sheets (%s).", row_num, p)
+        time.sleep(1.2)   # respeita o rate-limit da API (60 req/min)
+
+
+# ===========================================================================
 # ORQUESTRADOR PRINCIPAL
 # ===========================================================================
 
@@ -874,20 +994,33 @@ class SocialMediaScraper:
             }
 
     # ------------------------------------------------------------------
-    def scrape_excel(self, input_path: str) -> None:
+    def scrape_sheet(self, input_source: str, tab_name: str = "posts") -> None:
         """
-        Processa todas as URLs da planilha e escreve os resultados
-        de volta nas colunas designadas por plataforma.
-        """
-        manager   = ExcelManager(input_path)
-        url_rows  = manager.url_rows()
+        Processa todas as URLs e escreve os resultados de volta.
 
+        input_source pode ser:
+          • Caminho local:  planilha.xlsx
+          • URL do Sheets:  https://docs.google.com/spreadsheets/d/...
+        """
+        if _is_google_sheet(input_source):
+            manager = GoogleSheetsManager(input_source, tab_name)
+            label   = f"Google Sheets — aba '{tab_name}'"
+        else:
+            if not Path(input_source).exists():
+                print(f"\nErro: arquivo não encontrado — {input_source}")
+                sys.exit(1)
+            manager = ExcelManager(input_source)
+            label   = input_source
+
+        url_rows = manager.url_rows()
         if not url_rows:
-            print("Nenhuma URL encontrada na planilha.")
+            print("Nenhuma URL encontrada.")
             return
 
         manager.ensure_headers()
         total = len(url_rows)
+        print(f"  Fonte : {label}")
+        print(f"  URLs  : {total}\n")
 
         for idx, (row_num, url) in enumerate(url_rows.items(), 1):
             print(f"  [{idx:>{len(str(total))}}/{total}] linha {row_num} — {url}")
@@ -896,15 +1029,14 @@ class SocialMediaScraper:
 
             if platform in _OUTPUT_COL:
                 manager.write_row(row_num, platform, result)
-                log.info("Linha %d salva (%s)", row_num, platform)
             else:
-                log.warning("Linha %d ignorada — plataforma '%s' sem colunas mapeadas.",
+                log.warning("Linha %d — plataforma '%s' sem colunas mapeadas.",
                             row_num, platform)
 
             if idx < total:
                 HumanBehavior.between_pages()
 
-        print(f"\nConcluído. Planilha atualizada: {input_path}")
+        print("\nConcluído!")
 
 
 # ===========================================================================
@@ -918,37 +1050,40 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemplos:
-  # Processar planilha (Chrome deve estar FECHADO para compartilhar o perfil)
-  python scraper.py planilha.xlsx
 
-  # Usar perfil Chrome em caminho personalizado
-  python scraper.py planilha.xlsx --perfil "/home/user/.config/google-chrome"
+  # Google Sheets (recomendado) — Chrome abre automaticamente
+  python scraper.py "https://docs.google.com/spreadsheets/d/SEU_ID" --porta-debug 9222
 
-  # Modo recomendado: abrir Chrome manualmente, logar, depois conectar via debug
-  #   1. Abra o Chrome com:  google-chrome --remote-debugging-port=9222
-  #   2. Faça login nas redes sociais normalmente
-  #   3. Execute:
+  # Google Sheets com aba específica
+  python scraper.py "https://docs.google.com/spreadsheets/d/SEU_ID" --aba posts --porta-debug 9222
+
+  # Excel local
   python scraper.py planilha.xlsx --porta-debug 9222
 
-  # URL única (sem planilha)
+  # URL única (teste rápido)
   python scraper.py --url "https://www.linkedin.com/analytics/post-summary/urn:li:activity:..."
 
-Colunas de saída na planilha:
-  LinkedIn   → AF : AN
+Configuração inicial para Google Sheets:
+  python configurar_google.py
+
+Colunas de saída (aba 'posts'):
+  LinkedIn   → AF : AN   (coluna AE = URL de analytics)
   Instagram  → AO : AW
   TikTok     → AX : BF
         """,
     )
     p.add_argument("planilha", nargs="?",
-                   help="Planilha Excel com coluna 'URL' (ou coluna A)")
+                   help="URL do Google Sheets ou caminho de arquivo Excel local")
+    p.add_argument("--aba", default="posts", metavar="NOME",
+                   help="Nome da aba no Google Sheets (padrão: posts)")
     p.add_argument("--url", metavar="URL",
-                   help="Processar uma única URL diretamente")
+                   help="Processar uma única URL de analytics diretamente")
     p.add_argument("--perfil", metavar="CAMINHO",
-                   help="Diretório User Data do Chrome")
+                   help="Diretório User Data do Chrome (padrão: perfil atual)")
     p.add_argument("--porta-debug", type=int, metavar="PORTA",
-                   help="Porta de depuração remota do Chrome (ex: 9222)")
+                   help="Porta de depuração remota do Chrome (padrão: abre automaticamente)")
     p.add_argument("--headless", action="store_true",
-                   help="Executar sem janela de browser (requer login prévio via --porta-debug)")
+                   help="Executar sem janela de browser")
     return p
 
 
@@ -985,11 +1120,8 @@ def main() -> None:
             print("-" * 45)
 
         else:
-            if not Path(args.planilha).exists():
-                print(f"\nErro: arquivo não encontrado — {args.planilha}")
-                sys.exit(1)
-            print(f"\nPlanilha: {args.planilha}\n")
-            scraper.scrape_excel(args.planilha)
+            print()
+            scraper.scrape_sheet(args.planilha, tab_name=args.aba)
 
 
 if __name__ == "__main__":
