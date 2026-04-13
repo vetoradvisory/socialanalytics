@@ -53,7 +53,7 @@ except ImportError:
     _GSPREAD_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
-# undetected-chromedriver (opcional — fallback para selenium puro se ausente)
+# undetected-chromedriver (Chrome-only — não usado com Edge)
 # ---------------------------------------------------------------------------
 try:
     import undetected_chromedriver as uc
@@ -74,12 +74,6 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-if not _UC_AVAILABLE:
-    log.warning(
-        "undetected-chromedriver não encontrado — install: pip install undetected-chromedriver. "
-        "Usando selenium com patches manuais."
-    )
-
 
 # ===========================================================================
 # COMPORTAMENTO HUMANO
@@ -98,18 +92,18 @@ class HumanBehavior:
       • User-Agent realista de versão recente do Chrome
     """
 
-    # User-Agents reais de Chrome (Windows / Mac) — versões recentes
+    # User-Agents reais do Microsoft Edge (Windows / Mac) — versões recentes
     _USER_AGENTS: list[str] = [
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
     ]
 
     # Resoluções de monitor comuns
@@ -245,47 +239,44 @@ class HumanBehavior:
 
 
 # ===========================================================================
-# DRIVER CHROME
+# DRIVER EDGE
 # ===========================================================================
 
 def _default_profile() -> str:
     system = _platform_module.system()
     home = Path.home()
     if system == "Windows":
-        return str(home / "AppData" / "Local" / "Google" / "Chrome" / "User Data")
+        return str(home / "AppData" / "Local" / "Microsoft" / "Edge" / "User Data")
     if system == "Darwin":
-        return str(home / "Library" / "Application Support" / "Google" / "Chrome")
-    return str(home / ".config" / "google-chrome")
+        return str(home / "Library" / "Application Support" / "Microsoft Edge")
+    return str(home / ".config" / "microsoft-edge")
 
 
-def _find_chrome_exe() -> Optional[str]:
-    """Localiza o executável do Chrome no sistema operacional."""
+def _find_edge_exe() -> Optional[str]:
+    """Localiza o executável do Microsoft Edge no sistema operacional."""
     import shutil
 
     system = _platform_module.system()
     if system == "Windows":
         import os
         candidates = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-            os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            os.path.expandvars(r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe"),
+            os.path.expandvars(r"%PROGRAMFILES%\Microsoft\Edge\Application\msedge.exe"),
         ]
     elif system == "Darwin":
         candidates = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         ]
     else:
         candidates = [
-            "/usr/bin/google-chrome",
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium",
+            "/usr/bin/microsoft-edge",
+            "/usr/bin/microsoft-edge-stable",
+            "/usr/bin/microsoft-edge-dev",
         ]
 
-    # Tenta via PATH primeiro
-    for name in ("chrome", "google-chrome", "google-chrome-stable", "chromium"):
+    for name in ("msedge", "microsoft-edge", "microsoft-edge-stable"):
         found = shutil.which(name)
         if found:
             return found
@@ -293,139 +284,116 @@ def _find_chrome_exe() -> Optional[str]:
     return next((p for p in candidates if Path(p).exists()), None)
 
 
-def _launch_chrome_debug(port: int, profile: str) -> None:
+def _launch_edge_debug(port: int, profile: str) -> None:
     """
-    Fecha o Chrome existente e abre uma nova instância com a porta de debug.
+    Fecha o Edge existente e abre uma nova instância com a porta de debug.
     Usa o perfil real do usuário para preservar os logins.
     """
     import os
+    import socket
     import subprocess
 
     system = _platform_module.system()
 
-    # Encerra Chrome em execução (necessário para reusar o mesmo perfil)
-    log.info("Encerrando Chrome existente (se houver)...")
+    log.info("Encerrando Edge existente (se houver)...")
     if system == "Windows":
-        os.system("taskkill /f /im chrome.exe >nul 2>&1")
+        os.system("taskkill /f /im msedge.exe >nul 2>&1")
     elif system == "Darwin":
-        os.system("pkill -f 'Google Chrome' 2>/dev/null")
+        os.system("pkill -f 'Microsoft Edge' 2>/dev/null")
     else:
-        os.system("pkill -f chrome 2>/dev/null")
+        os.system("pkill -f microsoft-edge 2>/dev/null")
     time.sleep(2)
 
-    chrome = _find_chrome_exe()
-    if not chrome:
+    edge = _find_edge_exe()
+    if not edge:
         raise RuntimeError(
-            "Google Chrome não encontrado.\n"
-            "Instale o Chrome ou abra manualmente antes de executar o scraper:\n"
-            f'  chrome.exe --remote-debugging-port={port}'
+            "Microsoft Edge não encontrado.\n"
+            "Instale o Edge ou abra manualmente:\n"
+            f'  msedge.exe --remote-debugging-port={port}'
         )
 
-    cmd = [chrome, f"--remote-debugging-port={port}", f"--user-data-dir={profile}"]
-    log.info("Abrindo Chrome: %s", " ".join(f'"{c}"' if " " in c else c for c in cmd))
+    cmd = [edge, f"--remote-debugging-port={port}", f"--user-data-dir={profile}"]
+    log.info("Abrindo Edge: %s", " ".join(f'"{c}"' if " " in c else c for c in cmd))
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # Aguarda o Chrome iniciar e a porta ficar disponível
-    import socket
-    for attempt in range(15):
+    # Aguarda o Edge iniciar e a porta ficar disponível
+    for _ in range(15):
         time.sleep(1)
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=1):
-                log.info("Chrome respondendo na porta %d", port)
-                time.sleep(1)  # margem extra para o DevTools Protocol estar pronto
+                log.info("Edge respondendo na porta %d", port)
+                time.sleep(1)
                 return
         except OSError:
             pass
-    log.warning("Chrome demorou para responder — tentando conectar mesmo assim...")
+    log.warning("Edge demorou para responder — tentando conectar mesmo assim...")
 
 
 def create_driver(
     profile_path: Optional[str] = None,
     debug_port: Optional[int] = None,
     headless: bool = False,
-) -> webdriver.Chrome:
+) -> webdriver.Edge:
     """
-    Cria o WebDriver do Chrome com máxima resistência à detecção.
+    Cria o WebDriver do Microsoft Edge com máxima resistência à detecção.
 
     Prioridade:
-      1. Porta de debug → conecta (ou abre) Chrome com --remote-debugging-port.
-      2. undetected-chromedriver + perfil → usa sessão existente sem markers de bot.
-      3. Selenium puro + patches manuais → fallback se uc não estiver instalado.
+      1. Porta de debug → conecta (ou abre) Edge com --remote-debugging-port.
+      2. Edge com patches manuais → usa o perfil do usuário (logins preservados).
     """
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+    from selenium.webdriver.edge.service import Service as EdgeService
+
     if debug_port:
-        opts = Options()
+        opts = EdgeOptions()
         opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{debug_port}")
 
-        def _connect() -> webdriver.Chrome:
+        def _connect():
             try:
-                from webdriver_manager.chrome import ChromeDriverManager
-                return webdriver.Chrome(
-                    service=Service(ChromeDriverManager().install()), options=opts
+                from webdriver_manager.microsoft import EdgeChromiumDriverManager
+                return webdriver.Edge(
+                    service=EdgeService(EdgeChromiumDriverManager().install()),
+                    options=opts,
                 )
             except Exception:
-                return webdriver.Chrome(options=opts)
+                return webdriver.Edge(options=opts)
 
-        # Tenta conectar; se falhar, abre o Chrome automaticamente e tenta de novo
         try:
-            log.info("Conectando ao Chrome na porta %d...", debug_port)
+            log.info("Conectando ao Edge na porta %d...", debug_port)
             driver = _connect()
             log.info("Conectado com sucesso.")
             return driver
         except WebDriverException:
-            log.info("Chrome não respondeu — abrindo automaticamente...")
+            log.info("Edge não respondeu — abrindo automaticamente...")
             profile = profile_path or _default_profile()
-            _launch_chrome_debug(debug_port, profile)
+            _launch_edge_debug(debug_port, profile)
             try:
                 driver = _connect()
                 log.info("Conectado com sucesso após abertura automática.")
                 return driver
             except WebDriverException as exc:
                 raise RuntimeError(
-                    f"\nNão foi possível conectar ao Chrome na porta {debug_port}.\n\n"
-                    "Abra o Chrome manualmente com:\n"
-                    f'  chrome.exe --remote-debugging-port={debug_port}\n\n'
+                    f"\nNão foi possível conectar ao Edge na porta {debug_port}.\n\n"
+                    "Abra o Edge manualmente com:\n"
+                    f'  msedge.exe --remote-debugging-port={debug_port}\n\n'
                     "Depois execute o scraper novamente."
                 ) from exc
 
     profile = profile_path or _default_profile()
     w, h = HumanBehavior.resolution()
     ua = HumanBehavior.user_agent()
-
-    if _UC_AVAILABLE:
-        return _create_uc_driver(profile, w, h, ua, headless)
-    return _create_selenium_driver(profile, w, h, ua, headless)
+    return _create_edge_driver(profile, w, h, ua, headless)
 
 
-def _create_uc_driver(
+def _create_edge_driver(
     profile: str, w: int, h: int, ua: str, headless: bool
-) -> webdriver.Chrome:
-    """Driver via undetected-chromedriver — remove automaticamente os markers
-    de automação que o Selenium deixa no browser."""
-    opts = uc.ChromeOptions()
-    opts.add_argument(f"--user-data-dir={profile}")
-    opts.add_argument("--profile-directory=Default")
-    opts.add_argument(f"--window-size={w},{h}")
-    opts.add_argument(f"--user-agent={ua}")
-    opts.add_argument("--lang=pt-BR,pt;q=0.9,en;q=0.8")
-    # Desativa flags que sinalizam automação
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    if headless:
-        opts.add_argument("--headless=new")
+) -> webdriver.Edge:
+    """Edge com patches manuais de anti-detecção (Edge é Chromium-based —
+    aceita as mesmas flags e o mesmo protocolo CDP do Chrome)."""
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+    from selenium.webdriver.edge.service import Service as EdgeService
 
-    log.info("Chrome (undetected) — perfil: %s  res: %dx%d", profile, w, h)
-    driver = uc.Chrome(options=opts, headless=headless)
-    # Garante que navigator.webdriver está indefinido
-    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
-    })
-    return driver
-
-
-def _create_selenium_driver(
-    profile: str, w: int, h: int, ua: str, headless: bool
-) -> webdriver.Chrome:
-    """Fallback com selenium puro + patches manuais de anti-detecção."""
-    opts = Options()
+    opts = EdgeOptions()
     opts.add_argument(f"--user-data-dir={profile}")
     opts.add_argument("--profile-directory=Default")
     opts.add_argument(f"--window-size={w},{h}")
@@ -436,7 +404,6 @@ def _create_selenium_driver(
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
-    # Desativa o aviso "Chrome está sendo controlado por software automatizado"
     opts.add_experimental_option("prefs", {
         "credentials_enable_service": False,
         "profile.password_manager_enabled": False,
@@ -444,17 +411,18 @@ def _create_selenium_driver(
     if headless:
         opts.add_argument("--headless=new")
 
-    log.info("Chrome (selenium+patches) — perfil: %s  res: %dx%d", profile, w, h)
+    log.info("Edge (selenium+patches) — perfil: %s  res: %dx%d", profile, w, h)
 
     try:
-        from webdriver_manager.chrome import ChromeDriverManager
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()), options=opts
+        from webdriver_manager.microsoft import EdgeChromiumDriverManager
+        from selenium.webdriver.edge.service import Service as EdgeService
+        driver = webdriver.Edge(
+            service=EdgeService(EdgeChromiumDriverManager().install()), options=opts
         )
     except Exception:
-        driver = webdriver.Chrome(options=opts)
+        driver = webdriver.Edge(options=opts)
 
-    # Patches via CDP / JS
+    # Patches via CDP / JS (funcionam igual no Edge por ser Chromium-based)
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": "\n".join([
             "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});",
@@ -1096,11 +1064,8 @@ def main() -> None:
         sys.exit(1)
 
     print("=" * 60)
-    print("  Social Media Analytics Scraper")
-    if _UC_AVAILABLE:
-        print("  [anti-bot: undetected-chromedriver ativo]")
-    else:
-        print("  [anti-bot: patches manuais — instale undetected-chromedriver]")
+    print("  Social Media Analytics Scraper  [browser: Edge]")
+    print("  [anti-bot: patches manuais CDP + User-Agent Edge]")
     print("=" * 60)
 
     with SocialMediaScraper(

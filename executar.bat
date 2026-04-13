@@ -3,7 +3,7 @@ chcp 65001 >nul
 title Social Media Analytics Scraper
 
 echo ============================================================
-echo   Social Media Analytics Scraper
+echo   Social Media Analytics Scraper  [browser: Edge]
 echo ============================================================
 echo.
 
@@ -13,6 +13,7 @@ if "%~1"=="" (
     echo ou execute pelo terminal:
     echo.
     echo   executar.bat planilha.xlsx
+    echo   executar.bat "https://docs.google.com/spreadsheets/d/..."
     echo.
     pause
     exit /b 1
@@ -38,34 +39,32 @@ if errorlevel 1 (
     echo.
 )
 
-REM ---------- Fecha Chrome existente e abre com debug ----------
-echo Fechando Chrome existente (se houver)...
-taskkill /f /im chrome.exe >nul 2>&1
+REM ---------- Fecha Edge existente e abre com debug ----------
+echo Fechando Edge existente (se houver)...
+taskkill /f /im msedge.exe >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-echo Abrindo Chrome com porta de debug %PORTA%...
-set CHROME_PATHS[0]=C:\Program Files\Google\Chrome\Application\chrome.exe
-set CHROME_PATHS[1]=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
-
-set CHROME_EXE=
-if exist "%CHROME_PATHS[0]%" set CHROME_EXE=%CHROME_PATHS[0]%
-if exist "%CHROME_PATHS[1]%" set CHROME_EXE=%CHROME_PATHS[1]%
-if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe" (
-    set CHROME_EXE=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe
+echo Abrindo Edge com porta de debug %PORTA%...
+set EDGE_EXE=
+if exist "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" (
+    set EDGE_EXE=C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+)
+if exist "C:\Program Files\Microsoft\Edge\Application\msedge.exe" (
+    set EDGE_EXE=C:\Program Files\Microsoft\Edge\Application\msedge.exe
 )
 
-if "%CHROME_EXE%"=="" (
-    echo [AVISO] Chrome nao encontrado nos caminhos padrao.
+if "%EDGE_EXE%"=="" (
+    echo [AVISO] Edge nao encontrado nos caminhos padrao.
     echo O scraper tentara abrir automaticamente.
     goto :run_scraper
 )
 
-start "" "%CHROME_EXE%" --remote-debugging-port=%PORTA% --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data"
-echo Chrome aberto. Aguardando inicializar...
+start "" "%EDGE_EXE%" --remote-debugging-port=%PORTA% --user-data-dir="%LOCALAPPDATA%\Microsoft\Edge\User Data"
+echo Edge aberto. Aguardando inicializar...
 timeout /t 4 /nobreak >nul
 
 echo.
-echo IMPORTANTE: Faca login no LinkedIn / Instagram / TikTok no Chrome aberto.
+echo IMPORTANTE: Faca login no LinkedIn / Instagram / TikTok no Edge aberto.
 echo Quando estiver logado, pressione qualquer tecla para iniciar a extracao.
 echo.
 pause
@@ -80,7 +79,7 @@ echo.
 if errorlevel 1 (
     echo [ERRO] O scraper terminou com erro. Veja o arquivo scraper.log para detalhes.
 ) else (
-    echo Concluido! Verifique a planilha "%PLANILHA%" para os resultados.
+    echo Concluido! Verifique a planilha para os resultados.
 )
 echo.
 pause
