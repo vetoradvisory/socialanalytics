@@ -35,11 +35,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM ---------- Instala dependencias se necessario ----------
-python -c "import selenium" >nul 2>&1
+REM ---------- Instala / atualiza dependencias ----------
+python -c "import selenium, openpyxl, gspread, google_auth_oauthlib" >nul 2>&1
 if errorlevel 1 (
-    echo Instalando dependencias...
+    echo Instalando dependencias (aguarde)...
     pip install -r requirements.txt
+    if errorlevel 1 (
+        echo [ERRO] Falha ao instalar dependencias. Verifique sua conexao.
+        pause
+        exit /b 1
+    )
     echo.
 )
 
