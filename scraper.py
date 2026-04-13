@@ -28,6 +28,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+# Garante que config.py seja encontrado independentemente do diretório
+# de onde o script é chamado (ex: double-click no .bat fora da pasta)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import column_index_from_string
