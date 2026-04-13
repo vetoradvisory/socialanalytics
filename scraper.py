@@ -248,6 +248,87 @@ def _default_profile() -> str:
     return str(home / ".config" / "google-chrome")
 
 
+def _find_chrome_exe() -> Optional[str]:
+    """Localiza o executável do Chrome no sistema operacional."""
+    import shutil
+
+    system = _platform_module.system()
+    if system == "Windows":
+        import os
+        candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+            os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+        ]
+    elif system == "Darwin":
+        candidates = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    else:
+        candidates = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+        ]
+
+    # Tenta via PATH primeiro
+    for name in ("chrome", "google-chrome", "google-chrome-stable", "chromium"):
+        found = shutil.which(name)
+        if found:
+            return found
+
+    return next((p for p in candidates if Path(p).exists()), None)
+
+
+def _launch_chrome_debug(port: int, profile: str) -> None:
+    """
+    Fecha o Chrome existente e abre uma nova instância com a porta de debug.
+    Usa o perfil real do usuário para preservar os logins.
+    """
+    import os
+    import subprocess
+
+    system = _platform_module.system()
+
+    # Encerra Chrome em execução (necessário para reusar o mesmo perfil)
+    log.info("Encerrando Chrome existente (se houver)...")
+    if system == "Windows":
+        os.system("taskkill /f /im chrome.exe >nul 2>&1")
+    elif system == "Darwin":
+        os.system("pkill -f 'Google Chrome' 2>/dev/null")
+    else:
+        os.system("pkill -f chrome 2>/dev/null")
+    time.sleep(2)
+
+    chrome = _find_chrome_exe()
+    if not chrome:
+        raise RuntimeError(
+            "Google Chrome não encontrado.\n"
+            "Instale o Chrome ou abra manualmente antes de executar o scraper:\n"
+            f'  chrome.exe --remote-debugging-port={port}'
+        )
+
+    cmd = [chrome, f"--remote-debugging-port={port}", f"--user-data-dir={profile}"]
+    log.info("Abrindo Chrome: %s", " ".join(f'"{c}"' if " " in c else c for c in cmd))
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Aguarda o Chrome iniciar e a porta ficar disponível
+    import socket
+    for attempt in range(15):
+        time.sleep(1)
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                log.info("Chrome respondendo na porta %d", port)
+                time.sleep(1)  # margem extra para o DevTools Protocol estar pronto
+                return
+        except OSError:
+            pass
+    log.warning("Chrome demorou para responder — tentando conectar mesmo assim...")
+
+
 def create_driver(
     profile_path: Optional[str] = None,
     debug_port: Optional[int] = None,
@@ -257,23 +338,44 @@ def create_driver(
     Cria o WebDriver do Chrome com máxima resistência à detecção.
 
     Prioridade:
-      1. Porta de debug → conecta ao Chrome já aberto pelo usuário (mais seguro).
+      1. Porta de debug → conecta (ou abre) Chrome com --remote-debugging-port.
       2. undetected-chromedriver + perfil → usa sessão existente sem markers de bot.
       3. Selenium puro + patches manuais → fallback se uc não estiver instalado.
     """
     if debug_port:
-        # Modo "attach": conecta ao Chrome aberto pelo usuário, sem nenhuma
-        # alteração de perfil — máxima naturalidade.
         opts = Options()
         opts.add_experimental_option("debuggerAddress", f"127.0.0.1:{debug_port}")
-        log.info("Conectando ao Chrome existente — porta %d", debug_port)
+
+        def _connect() -> webdriver.Chrome:
+            try:
+                from webdriver_manager.chrome import ChromeDriverManager
+                return webdriver.Chrome(
+                    service=Service(ChromeDriverManager().install()), options=opts
+                )
+            except Exception:
+                return webdriver.Chrome(options=opts)
+
+        # Tenta conectar; se falhar, abre o Chrome automaticamente e tenta de novo
         try:
-            from webdriver_manager.chrome import ChromeDriverManager
-            return webdriver.Chrome(
-                service=Service(ChromeDriverManager().install()), options=opts
-            )
-        except Exception:
-            return webdriver.Chrome(options=opts)
+            log.info("Conectando ao Chrome na porta %d...", debug_port)
+            driver = _connect()
+            log.info("Conectado com sucesso.")
+            return driver
+        except WebDriverException:
+            log.info("Chrome não respondeu — abrindo automaticamente...")
+            profile = profile_path or _default_profile()
+            _launch_chrome_debug(debug_port, profile)
+            try:
+                driver = _connect()
+                log.info("Conectado com sucesso após abertura automática.")
+                return driver
+            except WebDriverException as exc:
+                raise RuntimeError(
+                    f"\nNão foi possível conectar ao Chrome na porta {debug_port}.\n\n"
+                    "Abra o Chrome manualmente com:\n"
+                    f'  chrome.exe --remote-debugging-port={debug_port}\n\n'
+                    "Depois execute o scraper novamente."
+                ) from exc
 
     profile = profile_path or _default_profile()
     w, h = HumanBehavior.resolution()
